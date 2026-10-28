@@ -1,0 +1,9 @@
+{
+  "name": "be.synvio.krunner_projects",
+  "description": "KRunner Projects native messaging host",
+  "path": "@HOST_PATH@",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://@EXTENSION_ID@/"
+  ]
+}

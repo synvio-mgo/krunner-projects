@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "KRunner Projects bridge",
+  "version": "0.1.0",
+  "description": "Lets KRunner open and focus your saved Chrome tab groups.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAslUnxBNTuSEh0HCrCvyNd88++XJt77cKyAmM5uvFsx0b/0tJrgNVRux8m43E+Sckl76JUaBjR+pcOF5x75j4TSrn6y3ZklQnys3jPMuGSFpyLYzMJMJH67O+dl/hypbqjBhV3jz/+k9OGC+2D/fH8qkb9tskI9ljvcYrWevyyN5BmWTS41p4ZrGwEmxNbt8dY0qyUxKa3p1ikJobKPMzV+Bb1VadDUq5tEbsb6/+M3BZIfDUiZ4LmtTmL8YcSGnAfPUiP3H+qZIjkJPblxmKxSrnX6auJIiX9/gPSr4tF6b2hgL6VwKk1AKA9dJ/e704jfCVAkrxmCjYVDeamxOEewIDAQAB",
+  "permissions": [
+    "nativeMessaging",
+    "tabs",
+    "tabGroups",
+    "alarms"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

@@ -1,0 +1,17 @@
+{
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "mgo@synvio.be",
+                "Name": "Mathias"
+            }
+        ],
+        "Description": "Open a VS Code project together with its saved Chrome tab group, or a Chrome tab group on its own",
+        "EnabledByDefault": true,
+        "Icon": "folder-development",
+        "License": "MIT",
+        "Name": "Projects & Chrome groups",
+        "Version": "0.1.0"
+    },
+    "X-KDE-ConfigModule": "kf6/krunner/kcms/kcm_krunner_projects"
+}

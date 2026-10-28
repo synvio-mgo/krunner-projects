@@ -1,0 +1,7 @@
+{
+    "KPlugin": {
+        "Description": "Configure the Projects & Chrome groups runner",
+        "Icon": "folder-development",
+        "Name": "Projects & Chrome groups"
+    }
+}
