@@ -32,7 +32,8 @@ KRunner ──► krunner_projects.so ──(D-Bus be.synvio.KRunnerProjects)─
 
 Een opgeslagen groep die **al open** staat wordt gefocust (venster naar voor,
 groep uitgeklapt, actief tabblad geactiveerd). Een groep die **gesloten** is
-wordt opnieuw aangemaakt met dezelfde naam, kleur en tabbladen. Chrome bewaart
+wordt opnieuw aangemaakt in een eigen nieuw venster, met dezelfde naam, kleur en
+tabbladen. Chrome bewaart
 nieuwe groepen automatisch, dus na zo'n heropening staat die groep twee keer in de
 lijst van Chrome; de extensie-API kan opgeslagen groepen niet zelf heropenen of
 verwijderen. Draait Chrome niet, dan wordt het eerst gestart; blijft de brug

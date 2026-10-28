@@ -97,32 +97,15 @@ async function focusGroup(groupId, windowId) {
   return { groupId, windowId, focused: true };
 }
 
-async function targetWindow() {
-  // Prefer the last focused normal window; otherwise make one.
-  const wins = await chrome.windows.getAll({ windowTypes: ["normal"] });
-  if (!wins.length) {
-    return chrome.windows.create({ focused: true });
-  }
-  try {
-    const w = await chrome.windows.getLastFocused({ windowTypes: ["normal"] });
-    if (w) return w;
-  } catch (e) {
-    /* fall through */
-  }
-  return wins[0];
-}
-
 async function createGroup(title, color, urls) {
   if (!urls || !urls.length) throw new Error("group has no tabs");
-  const win = await targetWindow();
-  const tabIds = [];
-  for (const [i, url] of urls.entries()) {
-    const tab = await chrome.tabs.create({ windowId: win.id, url, active: i === 0 });
-    tabIds.push(tab.id);
-  }
+  // A saved group gets a window of its own, holding nothing but the group.
+  const win = await chrome.windows.create({ url: urls, focused: true, state: "maximized" });
+  const tabs = await chrome.tabs.query({ windowId: win.id });
+  const tabIds = tabs.map((t) => t.id);
   const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId: win.id } });
   await chrome.tabGroups.update(groupId, { title, color, collapsed: false });
-  await chrome.windows.update(win.id, { focused: true });
+  if (tabIds.length) await chrome.tabs.update(tabIds[0], { active: true });
   return { groupId, windowId: win.id, created: true, tabs: tabIds.length };
 }
 
