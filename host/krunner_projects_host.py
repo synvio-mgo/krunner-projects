@@ -11,8 +11,15 @@ Chrome starts this process when the extension connects.  It does two things:
 D-Bus interface ``be.synvio.KRunnerProjects.Chrome`` at ``/Chrome``:
 
     ListGroups()        -> JSON list of saved groups, each with an ``open`` flag
-    OpenGroup(guid)     -> JSON result; focuses the group if open, else recreates it
+    OpenGroup(guid)     -> JSON result; focuses the group if open, else restores it
+                           from Chrome's recently-closed list (Chrome re-links the
+                           restored tabs to the existing saved group, so no copy is
+                           made).  If neither works the result is
+                           {"ok": false, "reason": "closed_not_restorable"}.
+    RecreateGroup(guid) -> JSON result; builds the group anew from its urls.  Chrome
+                           saves that as a second group, so only on explicit request.
     OpenUrls(urls json) -> JSON result; opens the urls in a plain new window
+    Call(cmd, args json)-> raw pass-through to the extension (debugging)
     Ping()              -> True
 
 Saved groups come from the profile on disk (see chromegroups.py); which of them
@@ -131,6 +138,38 @@ class ChromeBridge(dbus.service.Object):
             candidates = same_color or candidates
         return candidates[0] if candidates else None
 
+    @staticmethod
+    def _norm_url(url: str | None) -> str:
+        url = (url or "").split("#", 1)[0]
+        return url[:-1] if url.endswith("/") else url
+
+    def _find_restorable(self, group: chromegroups.Group, sessions: list[dict]) -> tuple[str, str] | None:
+        """Pick the recently-closed entry that held this group.
+
+        Preferably the most recent closed window whose tabs cover at least half
+        of the group's urls, otherwise a single closed tab with one of them.
+        Returns (sessionId, "window" | "tab") or None.
+        """
+        wanted = {self._norm_url(t.url) for t in group.tabs}
+        if not wanted:
+            return None
+        best, best_score = None, 0.0
+        for s in sessions:  # most recent first, so ties keep the earlier hit
+            w = s.get("window")
+            if not w:
+                continue
+            urls = {self._norm_url(t.get("url")) for t in w.get("tabs", [])}
+            score = len(wanted & urls) / len(wanted)
+            if score > best_score:
+                best, best_score = w, score
+        if best and best_score >= 0.5:
+            return best["sessionId"], "window"
+        for s in sessions:
+            t = s.get("tab")
+            if t and self._norm_url(t.get("url")) in wanted:
+                return t["sessionId"], "tab"
+        return None
+
     # -- D-Bus API -------------------------------------------------------
     @dbus.service.method(IFACE, in_signature="", out_signature="b")
     def Ping(self):
@@ -154,27 +193,75 @@ class ChromeBridge(dbus.service.Object):
 
         self._request("listOpen", {}, done)
 
-    @dbus.service.method(IFACE, in_signature="s", out_signature="s", async_callbacks=("reply", "error"))
-    def OpenGroup(self, guid, reply, error):
+    def _group_or_reply(self, guid, reply):
         guid = str(guid)
         group = next((g for g in self._saved_groups() if g.guid == guid), None)
         if group is None:
             reply(json.dumps({"ok": False, "error": f"no saved group with guid {guid}"}))
+        return group
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s", async_callbacks=("reply", "error"))
+    def OpenGroup(self, guid, reply, error):
+        group = self._group_or_reply(guid, reply)
+        if group is None:
             return
+
+        def finish(obj: dict) -> None:
+            obj.setdefault("title", group.title)
+            reply(json.dumps(obj, ensure_ascii=False))
+
+        def focus(hit: dict, extra: dict) -> None:
+            self._request("focus", {"groupId": hit["id"], "windowId": hit["windowId"]},
+                          lambda r: finish({**r, **extra}))
 
         def after_list(result):
             hit = self._match_open(group, result.get("groups", [])) if result.get("ok") else None
             if hit:
-                self._request("focus", {"groupId": hit["id"], "windowId": hit["windowId"]},
-                              lambda r: reply(json.dumps(r)))
+                focus(hit, {})
             else:
-                self._request(
-                    "create",
-                    {"title": group.title, "color": group.color, "urls": [t.url for t in group.tabs]},
-                    lambda r: reply(json.dumps(r)),
-                )
+                self._request("recentlyClosed", {}, after_recent)
+
+        def after_recent(result):
+            found = self._find_restorable(group, result.get("sessions", [])) if result.get("ok") else None
+            if not found:
+                log(f"group {group.title!r} is closed and not in the recently-closed list")
+                finish({"ok": False, "reason": "closed_not_restorable"})
+                return
+            session_id, kind = found
+            log(f"restoring {kind} {session_id} for group {group.title!r}")
+            self._request("restore", {"sessionId": session_id}, after_restore)
+
+        def after_restore(result):
+            if not result.get("ok"):
+                finish({"ok": False, "reason": "restore_failed", "error": result.get("error")})
+                return
+            # Chrome needs a moment to reopen the group before it shows up in tabGroups.
+            GLib.timeout_add(800, lambda: (self._request("listOpen", {}, after_restore_list), False)[1])
+
+        def after_restore_list(result):
+            hit = self._match_open(group, result.get("groups", [])) if result.get("ok") else None
+            if hit:
+                focus(hit, {"restored": True})
+            else:
+                finish({"ok": False, "reason": "restore_failed", "error": "group not found after restore"})
 
         self._request("listOpen", {}, after_list)
+
+    @dbus.service.method(IFACE, in_signature="s", out_signature="s", async_callbacks=("reply", "error"))
+    def RecreateGroup(self, guid, reply, error):
+        group = self._group_or_reply(guid, reply)
+        if group is None:
+            return
+        self._request(
+            "create",
+            {"title": group.title, "color": group.color, "urls": [t.url for t in group.tabs]},
+            lambda r: reply(json.dumps({**r, "title": group.title}, ensure_ascii=False)),
+        )
+
+    @dbus.service.method(IFACE, in_signature="ss", out_signature="s", async_callbacks=("reply", "error"))
+    def Call(self, cmd, args_json, reply, error):
+        """Raw pass-through to the extension, for debugging and experiments."""
+        self._request(str(cmd), json.loads(str(args_json) or "{}"), lambda r: reply(json.dumps(r)))
 
     @dbus.service.method(IFACE, in_signature="s", out_signature="s", async_callbacks=("reply", "error"))
     def OpenUrls(self, urls_json, reply, error):

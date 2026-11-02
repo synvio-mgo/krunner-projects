@@ -36,6 +36,12 @@ def recv(proc):
 
 
 def main():
+    # Chrome's own host may already own the bus name; then our test host would
+    # exit and the calls would land in the real Chrome.  Use a private bus.
+    if dbus.SessionBus().name_has_owner(BUS) and not os.environ.get("KRUNNER_PROJECTS_PRIVATE_BUS"):
+        os.environ["KRUNNER_PROJECTS_PRIVATE_BUS"] = "1"
+        os.execvp("dbus-run-session", ["dbus-run-session", "--", sys.executable, *sys.argv])
+
     groups = json.loads(subprocess.check_output([sys.executable, "-I", str(HERE.parent / "host" / "chromegroups.py"), "--json"]))
     assert groups, "need at least one saved group in the Chrome profile"
     target = groups[0]
@@ -56,17 +62,25 @@ def main():
         iface = dbus.Interface(obj, "be.synvio.KRunnerProjects.Chrome")
         results["ping"] = bool(iface.Ping())
         results["list"] = json.loads(iface.ListGroups(timeout=10))
-        results["open_closed"] = json.loads(iface.OpenGroup(target["guid"], timeout=10))
+        # closed, but a window with its tabs sits in the recently-closed list -> restore
+        state["recent"] = [{"lastModified": 1, "window": {"sessionId": "w1", "tabs": [{"url": t["url"]} for t in target["tabs"]]}}]
+        results["restore"] = json.loads(iface.OpenGroup(target["guid"], timeout=10))
+        # now open -> focus
         results["open_open"] = json.loads(iface.OpenGroup(target["guid"], timeout=10))
+        # closed and gone from the recently-closed list -> nothing is created
+        state["open"].clear()
+        state["recent"] = [{"lastModified": 1, "tab": {"sessionId": "t1", "url": "https://example.invalid/"}}]
+        results["not_restorable"] = json.loads(iface.OpenGroup(target["guid"], timeout=10))
+        results["recreate"] = json.loads(iface.RecreateGroup(target["guid"], timeout=10))
         results["missing"] = json.loads(iface.OpenGroup("nope", timeout=10))
 
     t = threading.Thread(target=dbus_calls, daemon=True)
     t.start()
 
-    # Play the extension: first two listOpen answers say "nothing open", the
-    # third says the target group is open, so OpenGroup takes both branches.
+    # Play the extension.
     seen = []
-    open_state = []
+    state = {"open": [], "recent": []}
+    open_entry = {"id": 7, "windowId": 3, "title": target["title"], "color": target["color"], "tabs": []}
     while t.is_alive():
         try:
             msg = recv(proc)
@@ -74,11 +88,17 @@ def main():
             break
         seen.append(msg["cmd"])
         if msg["cmd"] == "listOpen":
-            reply = {"ok": True, "groups": list(open_state)}
+            reply = {"ok": True, "groups": list(state["open"])}
+        elif msg["cmd"] == "recentlyClosed":
+            reply = {"ok": True, "sessions": list(state["recent"])}
+        elif msg["cmd"] == "restore":
+            assert msg["args"]["sessionId"] == "w1", msg
+            state["open"].append(open_entry)
+            reply = {"ok": True, "restored": True, "relinked": True}
         elif msg["cmd"] == "create":
             assert msg["args"]["title"] == target["title"]
             assert msg["args"]["urls"] == [t["url"] for t in target["tabs"]]
-            open_state.append({"id": 7, "windowId": 3, "title": target["title"], "color": target["color"], "tabs": []})
+            state["open"].append(open_entry)
             reply = {"ok": True, "created": True, "groupId": 7}
         elif msg["cmd"] == "focus":
             assert msg["args"]["groupId"] == 7
@@ -92,11 +112,18 @@ def main():
     proc.wait(timeout=5)
 
     assert results["ping"] is True
-    assert len(results["list"]) == len(groups) and results["list"][0]["open"] is False
-    assert results["open_closed"].get("created") is True, results["open_closed"]
-    assert results["open_open"].get("focused") is True, results["open_open"]
+    assert len(results["list"]) == len(groups), (len(results["list"]), len(groups))
+    assert all(g["open"] is False for g in results["list"]), [g["title"] for g in results["list"] if g["open"]]
+    assert results["restore"].get("focused") and results["restore"].get("restored"), results["restore"]
+    assert results["open_open"].get("focused") is True and "restored" not in results["open_open"], results["open_open"]
+    assert results["not_restorable"] == {"ok": False, "reason": "closed_not_restorable", "title": target["title"]}, results["not_restorable"]
+    assert results["recreate"].get("created") is True, results["recreate"]
     assert results["missing"]["ok"] is False
-    assert seen == ["listOpen", "listOpen", "create", "listOpen", "focus"], seen
+    assert seen == ["listOpen",
+                    "listOpen", "recentlyClosed", "restore", "listOpen", "focus",
+                    "listOpen", "focus",
+                    "listOpen", "recentlyClosed",
+                    "create"], seen
     print("host test OK:", seen)
 
 

@@ -1,8 +1,9 @@
 // KRunner Projects – Chrome side.
 //
 // Keeps a native messaging port open to krunner_projects_host.py and executes
-// the small set of commands it sends: list the open tab groups, focus one, or
-// (re)create a saved group from its urls.
+// the small set of commands it sends: list the open tab groups, focus one,
+// restore a recently closed window or tab (Chrome re-links it to its saved
+// group), or (re)create a saved group from its urls.
 
 const HOST = "be.synvio.krunner_projects";
 let port = null;
@@ -65,6 +66,32 @@ async function handle(cmd, args) {
     case "openWindow": {
       const w = await chrome.windows.create({ url: args.urls, focused: true });
       return { windowId: w.id };
+    }
+    case "recentlyClosed": {
+      const sessions = await chrome.sessions.getRecentlyClosed({ maxResults: 25 });
+      return {
+        sessions: sessions.map((s) => ({
+          lastModified: s.lastModified,
+          window: s.window
+            ? { sessionId: s.window.sessionId, tabs: (s.window.tabs || []).map((t) => ({ url: t.url, title: t.title, groupId: t.groupId })) }
+            : undefined,
+          tab: s.tab ? { sessionId: s.tab.sessionId, url: s.tab.url, title: s.tab.title, groupId: s.tab.groupId } : undefined,
+        })),
+      };
+    }
+    case "restore": {
+      let s;
+      try {
+        s = await chrome.sessions.restore(args.sessionId);
+      } catch (e) {
+        // When the restored tabs belong to a saved group Chrome hands them to its
+        // tab group code and then reports "No active tab." - the group is open anyway.
+        if (/no active tab/i.test(String(e?.message || e))) return { restored: true, relinked: true };
+        throw e;
+      }
+      const w = s.window ? s.window.id : s.tab ? s.tab.windowId : undefined;
+      if (w !== undefined) await chrome.windows.update(w, { focused: true }).catch(() => {});
+      return { restored: true, windowId: w };
     }
     default:
       throw new Error(`unknown command ${cmd}`);

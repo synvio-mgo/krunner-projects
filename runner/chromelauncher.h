@@ -11,6 +11,10 @@ class QDBusServiceWatcher;
  * service.  If Chrome is not running yet it is started first, and if the
  * service never shows up the group's urls are opened in a plain window.
  *
+ * The host focuses an open group or restores a recently closed one; when it
+ * can do neither (the group left Chrome's recently-closed list) nothing is
+ * created, the user gets a desktop notification instead.
+ *
  * Lives in the main thread; call openGroup via a queued invocation.
  */
 class ChromeLauncher : public QObject
@@ -27,7 +31,9 @@ public Q_SLOTS:
 
 private:
     void callOpenGroup(const QString &guid);
+    void handleOpenGroupReply(const QString &json);
     void openPlainWindow(const QStringList &urls);
+    static void notify(const QString &summary, const QString &body);
 
     QString m_chromeCommand;
     QDBusServiceWatcher *m_watcher = nullptr;

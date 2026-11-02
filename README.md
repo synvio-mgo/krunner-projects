@@ -32,12 +32,24 @@ KRunner ──► krunner_projects.so ──(D-Bus be.synvio.KRunnerProjects)─
 
 Een opgeslagen groep die **al open** staat wordt gefocust (venster naar voor,
 groep uitgeklapt, actief tabblad geactiveerd). Een groep die **gesloten** is
-wordt opnieuw aangemaakt in een eigen nieuw venster, met dezelfde naam, kleur en
-tabbladen. Chrome bewaart
-nieuwe groepen automatisch, dus na zo'n heropening staat die groep twee keer in de
-lijst van Chrome; de extensie-API kan opgeslagen groepen niet zelf heropenen of
-verwijderen. Draait Chrome niet, dan wordt het eerst gestart; blijft de brug
-daarna uit (extensie niet geladen), dan gaan de url's in een gewoon nieuw venster.
+wordt hersteld via Chromes lijst van onlangs gesloten vensters en tabbladen
+(`chrome.sessions`): Chrome koppelt de herstelde tabbladen zelf weer aan de
+bestaande opgeslagen groep en opent die in een eigen venster, zonder kopie.
+Die lijst bevat de laatste 25 sluitingen en overleeft een herstart van Chrome.
+
+Zit de groep daar niet meer in, dan maakt het plugin **niets** aan (Chrome zou
+een nieuw aangemaakte groep meteen opnieuw opslaan en dan staat hij dubbel in de
+lijst); je krijgt een melding en opent de groep één keer vanuit de tabgroepbalk
+van Chrome, waarna KRunner hem weer kan openen. De extensie-API kan opgeslagen
+groepen namelijk niet zelf opsommen, openen of verwijderen. Een kopie aanmaken
+kan nog wel bewust, via D-Bus `RecreateGroup`.
+
+Draait Chrome niet, dan wordt het eerst gestart; blijft de brug daarna uit
+(extensie niet geladen), dan gaan de url's in een gewoon nieuw venster.
+
+Een dubbele opgeslagen groep verwijder je door de open kopie in Chrome te
+degroeperen (rechtsklik op de groep › *Groep opheffen*): Chrome gooit dan die
+opgeslagen groep weg.
 
 ## Installatie
 
@@ -72,7 +84,9 @@ in subgroepen `[Runners][krunner_projects][Projects][<naam>]`.
 ```bash
 python3 host/chromegroups.py                      # lijst van opgeslagen groepen
 qdbus6 be.synvio.KRunnerProjects /Chrome ListGroups   # idem, met open/gesloten-status (Chrome moet draaien)
-qdbus6 be.synvio.KRunnerProjects /Chrome OpenGroup <guid>
+qdbus6 be.synvio.KRunnerProjects /Chrome OpenGroup <guid>     # focus / herstel
+qdbus6 be.synvio.KRunnerProjects /Chrome RecreateGroup <guid> # bewust een kopie maken
+python3 tests/test_host.py                        # protocoltest van de brug zonder Chrome
 tail ~/.cache/krunner-projects-host.log           # log van de brug
 ```
 

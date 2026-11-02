@@ -4,10 +4,16 @@
 #include <QDBusConnectionInterface>
 #include <QDBusInterface>
 #include <QDBusPendingCall>
+#include <QDBusPendingCallWatcher>
+#include <QDBusPendingReply>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QDBusServiceWatcher>
 #include <QDebug>
 #include <QProcess>
 #include <QTimer>
+
+#include <KLocalizedString>
 
 using namespace Qt::StringLiterals;
 
@@ -72,7 +78,44 @@ void ChromeLauncher::openGroup(const QString &guid, const QStringList &fallbackU
 void ChromeLauncher::callOpenGroup(const QString &guid)
 {
     QDBusInterface iface(s_service, s_path, s_iface, QDBusConnection::sessionBus());
-    iface.asyncCall(u"OpenGroup"_s, guid);
+    iface.setTimeout(30000); // restoring may take a few seconds
+    auto *watcher = new QDBusPendingCallWatcher(iface.asyncCall(u"OpenGroup"_s, guid), this);
+    connect(watcher, &QDBusPendingCallWatcher::finished, this, [this](QDBusPendingCallWatcher *w) {
+        w->deleteLater();
+        QDBusPendingReply<QString> reply = *w;
+        if (reply.isError()) {
+            qWarning() << "krunner_projects: OpenGroup failed:" << reply.error().message();
+            notify(i18n("Chrome group not opened"), reply.error().message());
+            return;
+        }
+        handleOpenGroupReply(reply.value());
+    });
+}
+
+void ChromeLauncher::handleOpenGroupReply(const QString &json)
+{
+    const QJsonObject obj = QJsonDocument::fromJson(json.toUtf8()).object();
+    if (obj.value(u"ok"_s).toBool()) {
+        return;
+    }
+    const QString title = obj.value(u"title"_s).toString();
+    const QString reason = obj.value(u"reason"_s).toString();
+    qInfo() << "krunner_projects: group" << title << "not opened:" << json;
+    if (reason == u"closed_not_restorable"_s) {
+        notify(i18n("Chrome group \"%1\" not opened", title),
+               i18n("It was closed too long ago for Chrome to restore it. "
+                    "Open it once from Chrome's tab group bar; after that KRunner can open it again."));
+    } else {
+        const QString err = obj.value(u"error"_s).toString();
+        notify(i18n("Chrome group \"%1\" not opened", title), err.isEmpty() ? reason : err);
+    }
+}
+
+void ChromeLauncher::notify(const QString &summary, const QString &body)
+{
+    QDBusInterface iface(u"org.freedesktop.Notifications"_s, u"/org/freedesktop/Notifications"_s,
+                         u"org.freedesktop.Notifications"_s, QDBusConnection::sessionBus());
+    iface.asyncCall(u"Notify"_s, u"krunner"_s, 0u, u"google-chrome"_s, summary, body, QStringList(), QVariantMap(), 8000);
 }
 
 void ChromeLauncher::openPlainWindow(const QStringList &urls)
